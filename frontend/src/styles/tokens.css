@@ -1,0 +1,24 @@
+/* 档案鉴定室配色：米黄纸 + 深棕墨 + 朱红印章。全部 oklch，禁止渐变。 */
+:root {
+  --paper: oklch(0.95 0.02 85);
+  --paper-deep: oklch(0.925 0.022 84);
+  --paper-raise: oklch(0.972 0.014 88);
+  --paper-sink: oklch(0.905 0.024 82);
+  --ink: oklch(0.28 0.035 55);
+  --ink-soft: oklch(0.42 0.03 55);
+  --ink-dim: oklch(0.56 0.025 60);
+  --line: oklch(0.82 0.02 78);
+  --line-strong: oklch(0.66 0.03 68);
+  --vermilion: oklch(0.55 0.17 30);
+  --vermilion-soft: oklch(0.72 0.11 35);
+  --olive: oklch(0.5 0.06 135);
+  --amber: oklch(0.64 0.12 75);
+  --font-display: 'Newsreader', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  --font-body: 'Source Sans 3', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+  --step--1: 12px;
+  --step-0: 14px;
+  --step-1: 16px;
+  --step-2: clamp(18px, 1.4vw, 21px);
+  --step-3: clamp(22px, 2vw, 28px);
+  --step-4: clamp(28px, 2.8vw, 40px);
+}
