@@ -30,6 +30,8 @@ const TONE: Record<string, string> = {
   running: 'amber',
   queued: 'neutral',
   pending: 'neutral',
+  split: 'neutral',
+  retired: 'neutral',
   reject: '',
   rejected: '',
   failed: '',

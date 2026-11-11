@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from src.constants.enums import FIELD_LABELS
+from src.constants.enums import FIELD_LABELS, GoldenStatus
 from src.models.entity_cluster import EntityCluster
 from src.models.golden_record import GoldenRecord
 from src.schemas.golden import serialize_golden
@@ -73,10 +73,14 @@ def get_golden(db: Session, golden_id: str) -> dict[str, Any]:
 
 
 def export_csv(db: Session, run_id: str) -> tuple[str, str]:
-    """返回 (CSV 文本, 文件名)。字段口径固定，供营销系统直接导入。"""
+    """返回 (CSV 文本, 文件名)。字段口径固定，供营销系统直接导入。
+
+    已退役（retired）的档案是人工重新成组后被取代的旧版本，不下发营销。
+    """
     rows = (
         db.query(GoldenRecord)
         .filter(GoldenRecord.run_id == run_id)
+        .filter(GoldenRecord.status != GoldenStatus.RETIRED.value)
         .order_by(GoldenRecord.entity_key.asc())
         .all()
     )

@@ -121,6 +121,7 @@ export const GoldenPage = () => {
               <option value="">全部</option>
               <option value="active">生效</option>
               <option value="provisional">暂定</option>
+              <option value="retired">已退役</option>
             </select>
           </label>
           <label className="field" style={{ marginBottom: 0 }}>

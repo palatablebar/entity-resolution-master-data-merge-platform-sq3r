@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.config.database import session_scope
-from src.constants.enums import ClusterStatus, GoldenStatus, RunStatus
+from src.constants.enums import CandidateDecision, RunStatus
 from src.constants.roles import ROLE_ADMIN, ROLE_CURATOR, ROLE_MARKETING
 from src.constants.weights import DEFAULT_FIELD_WEIGHTS, DEFAULT_SOURCE_RELIABILITY
 from src.models.entity_cluster import EntityCluster
@@ -32,7 +33,7 @@ from src.models.merge_rule import MergeRule
 from src.models.resolution_run import ResolutionRun
 from src.models.source_record import SourceRecord
 from src.models.user import User
-from src.services import resolution_service
+from src.services import candidate_service, resolution_service
 from src.utils.normalize import (
     DEFAULT_NORMALIZATION,
     normalize_address,
@@ -368,7 +369,11 @@ def _seed_run(
 
 
 def seed_review_states(db: Session, baseline: ResolutionRun) -> None:
-    """基线运行落定后的人工复核痕迹：确认 1 簇、拒绝 3 簇、留 2 簇待复核。"""
+    """基线运行落定后的人工复核痕迹：确认 1 簇、拒绝 3 簇、留 2 簇待复核。
+
+    走与线上一致的 review_candidate → 重新成组 → 重建黄金档案链路，
+    保证演示数据与真实复核结果同源（含拆分留痕与档案退役）。
+    """
     if db.query(MatchCandidate).filter(
         MatchCandidate.run_id == baseline.id,
         MatchCandidate.status != "pending",
@@ -377,6 +382,9 @@ def seed_review_states(db: Session, baseline: ResolutionRun) -> None:
         return
 
     curator = db.query(User).filter(User.email == "curator@master.local").first()
+    if curator is None:
+        skipped("CandidateReview", f"run={baseline.run_label}")
+        return
     clusters = (
         db.query(EntityCluster)
         .filter(EntityCluster.run_id == baseline.id, EntityCluster.edge_type == "review")
@@ -387,46 +395,42 @@ def seed_review_states(db: Session, baseline: ResolutionRun) -> None:
         skipped("CandidateReview", f"run={baseline.run_label}")
         return
 
-    review_time = BASE_REFERENCE + timedelta(hours=3)
     confirm_cluster = clusters[0]
     reject_clusters = clusters[1:4]
 
     def cluster_candidates(cluster: EntityCluster) -> list[MatchCandidate]:
-        member_ids = [str(member) for member in cluster.member_ids]
+        member_ids = [uuid.UUID(str(member)) for member in cluster.member_ids]
         return (
             db.query(MatchCandidate)
             .filter(
                 MatchCandidate.run_id == baseline.id,
+                MatchCandidate.decision == CandidateDecision.REVIEW.value,
+                MatchCandidate.status == "pending",
                 MatchCandidate.left_record_id.in_(member_ids),
                 MatchCandidate.right_record_id.in_(member_ids),
             )
+            .order_by(MatchCandidate.score.desc())
             .all()
         )
 
     for candidate in cluster_candidates(confirm_cluster):
-        candidate.status = "confirmed"
-        candidate.reviewed_by = curator.id if curator else None
-        candidate.reviewed_at = review_time
-        candidate.review_note = "姓名/手机/邮箱一致，地址为搬家后新址，确认同一会员"
-    confirm_cluster.status = ClusterStatus.CONFIRMED.value
-    confirm_cluster.review_notes = {
-        "confirmed_by": "curator@master.local",
-        "confirmed_at": review_time.isoformat(),
-        "note": "地址变更已核实",
-    }
-    confirm_golden = (
-        db.query(GoldenRecord).filter(GoldenRecord.cluster_id == confirm_cluster.id).first()
-    )
-    if confirm_golden is not None:
-        confirm_golden.status = GoldenStatus.ACTIVE.value
+        candidate_service.review_candidate(
+            db,
+            str(candidate.id),
+            action="confirm",
+            note="姓名/手机/邮箱一致，地址为搬家后新址，确认同一会员",
+            user=curator,
+        )
 
     for cluster in reject_clusters:
         for candidate in cluster_candidates(cluster):
-            candidate.status = "rejected"
-            candidate.reviewed_by = curator.id if curator else None
-            candidate.reviewed_at = review_time
-            candidate.review_note = "地址与门牌均不同，判定为同名不同人，拒绝合并"
-    db.commit()
+            candidate_service.review_candidate(
+                db,
+                str(candidate.id),
+                action="reject",
+                note="地址与门牌均不同，判定为同名不同人，拒绝合并",
+                user=curator,
+            )
     created("CandidateReview", f"run={baseline.run_label}")
 
 

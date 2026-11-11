@@ -3,6 +3,7 @@ import { candidateApi } from '../api/candidates';
 import { runApi } from '../api/runs';
 import { EmptyState } from '../components/common/EmptyState';
 import { RecordDiff } from '../components/common/RecordDiff';
+import { RegroupResultPanel } from '../components/common/RegroupResultPanel';
 import { ScoreBreakdown } from '../components/common/ScoreBreakdown';
 import { StatusStamp } from '../components/common/StatusStamp';
 import { BLOCKING_KEY_LABELS, CANDIDATE_STATUS_LABELS, DECISION_LABELS } from '../constants/resolution';
@@ -11,7 +12,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCandidateStore } from '../stores/candidateStore';
 import { useRecordStore } from '../stores/recordStore';
 import { useRunStore } from '../stores/runStore';
-import type { Candidate, Run } from '../types/models';
+import type { Candidate, RegroupResult, Run } from '../types/models';
 import { toHumanMessage } from '../utils/errorMessage';
 import { formatScore } from '../utils/formatScore';
 
@@ -37,6 +38,7 @@ export const CandidatesPage = () => {
   const loadRecordCounts = useRecordStore((state) => state.loadCounts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Candidate | null>(null);
+  const [regroup, setRegroup] = useState<RegroupResult | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,8 +105,15 @@ export const CandidatesPage = () => {
     setError(null);
     setMessage(null);
     try {
-      await candidateApi.review(detail.id, action, note);
-      setMessage(action === 'confirm' ? '已确认合并，簇与黄金档案同步更新。' : '已拒绝合并，候选留档。');
+      const reviewed = await candidateApi.review(detail.id, action, note);
+      setRegroup(reviewed.regroup ?? null);
+      setMessage(
+        reviewed.regroup?.idempotent
+          ? '同一判断已存在：未新增簇或档案，下方为当前成组状态。'
+          : action === 'confirm'
+            ? '已确认合并：按最终确认关系重新成组，黄金档案仅用已确认成员重建。'
+            : '已拒绝合并：被拒绝关系不会留在同一身份，相关簇与档案已重建。',
+      );
       setNote('');
       await loadCandidates();
       await refreshOverview();
@@ -137,6 +146,7 @@ export const CandidatesPage = () => {
               onChange={(event) => {
                 setRunId(event.target.value);
                 setActiveRun(event.target.value);
+                setRegroup(null);
                 setPage(1);
               }}
             >
@@ -153,6 +163,7 @@ export const CandidatesPage = () => {
               value={decision}
               onChange={(event) => {
                 setDecision(event.target.value);
+                setRegroup(null);
                 setPage(1);
               }}
             >
@@ -168,6 +179,7 @@ export const CandidatesPage = () => {
               value={status}
               onChange={(event) => {
                 setStatus(event.target.value);
+                setRegroup(null);
                 setPage(1);
               }}
             >
@@ -220,7 +232,10 @@ export const CandidatesPage = () => {
                   <tr
                     key={item.id}
                     className={`clickable${item.id === selectedId ? ' selected' : ''}`}
-                    onClick={() => setSelectedId(item.id)}
+                    onClick={() => {
+                      setSelectedId(item.id);
+                      setRegroup(null);
+                    }}
                   >
                     <td className="num" style={{ color: 'var(--vermilion)', fontWeight: 600 }}>
                       {formatScore(item.score)}
@@ -335,6 +350,7 @@ export const CandidatesPage = () => {
               <EmptyState title="选择左侧一对候选" hint="右侧会展示并置字段、相似度明细与落章按钮。" />
             </div>
           )}
+          {regroup ? <RegroupResultPanel regroup={regroup} /> : null}
         </div>
       </div>
     </div>

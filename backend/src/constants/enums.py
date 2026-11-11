@@ -36,6 +36,8 @@ class ClusterStatus(str, Enum):
     AUTO_MERGED = "auto_merged"
     PENDING_REVIEW = "pending_review"
     CONFIRMED = "confirmed"
+    # 人工重新成组后被取代的原簇（成员集合已不再是当前分组）
+    SPLIT = "split"
 
 
 class RunStatus(str, Enum):
@@ -48,6 +50,8 @@ class RunStatus(str, Enum):
 class GoldenStatus(str, Enum):
     ACTIVE = "active"
     PROVISIONAL = "provisional"
+    # 所属簇被拆分后退役的档案：不再下发营销，仅留档可查
+    RETIRED = "retired"
 
 
 class BlockingKey(str, Enum):

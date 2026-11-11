@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { runApi } from '../api/runs';
 import { EmptyState } from '../components/common/EmptyState';
 import { StatusStamp } from '../components/common/StatusStamp';
-import { SOURCE_LABELS } from '../constants/resolution';
+import { SOURCE_LABELS, EDGE_TYPE_LABELS } from '../constants/resolution';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { useClusterStore } from '../stores/clusterStore';
 import { useRunStore } from '../stores/runStore';
@@ -73,6 +73,7 @@ export const ClustersPage = () => {
       auto: items.filter((item) => item.status === 'auto_merged').length,
       review: items.filter((item) => item.status === 'pending_review').length,
       confirmed: items.filter((item) => item.status === 'confirmed').length,
+      split: items.filter((item) => item.status === 'split').length,
     };
   }, [pageData]);
 
@@ -118,6 +119,7 @@ export const ClustersPage = () => {
               <option value="auto_merged">自动成簇</option>
               <option value="pending_review">待复核</option>
               <option value="confirmed">已确认</option>
+              <option value="split">已拆分</option>
             </select>
           </label>
         </div>
@@ -132,7 +134,8 @@ export const ClustersPage = () => {
           <div className="card-head">
             <span className="card-title">簇清单</span>
             <span className="card-caption">
-              共 {pageData?.total ?? 0} 簇 · 本页 自动 {counts.auto} / 待复核 {counts.review} / 已确认 {counts.confirmed}
+              共 {pageData?.total ?? 0} 簇 · 本页 自动 {counts.auto} / 待复核 {counts.review} / 已确认{' '}
+              {counts.confirmed} / 已拆分 {counts.split}
             </span>
           </div>
           {pageData && pageData.items.length === 0 ? (
@@ -145,6 +148,7 @@ export const ClustersPage = () => {
                   <th>记录数</th>
                   <th>置信度</th>
                   <th>状态</th>
+                  <th>档案</th>
                   <th>类型</th>
                 </tr>
               </thead>
@@ -161,7 +165,14 @@ export const ClustersPage = () => {
                     <td>
                       <StatusStamp kind="cluster" value={item.status} />
                     </td>
-                    <td className="dim">{item.edge_type === 'auto' ? '自动边' : '复核边'}</td>
+                    <td>
+                      {item.golden_status ? (
+                        <StatusStamp kind="golden" value={item.golden_status} />
+                      ) : (
+                        <span className="dim" style={{ fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td className="dim">{EDGE_TYPE_LABELS[item.edge_type] ?? item.edge_type}</td>
                   </tr>
                 ))}
               </tbody>
@@ -200,6 +211,21 @@ export const ClustersPage = () => {
                   <div className="metric-value">{formatScore(detail.confidence)}</div>
                 </div>
                 <div className="metric">
+                  <div className="metric-label">黄金档案</div>
+                  <div style={{ paddingTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {detail.golden ? (
+                      <>
+                        <StatusStamp kind="golden" value={detail.golden.status} />
+                        <span className="mono soft" style={{ fontSize: 12 }}>
+                          {detail.golden.entity_key}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="dim" style={{ fontSize: 12 }}>无档案</span>
+                    )}
+                  </div>
+                </div>
+                <div className="metric">
                   <div className="metric-label">簇键</div>
                   <div className="mono soft" style={{ paddingTop: 8 }}>{detail.cluster_key}</div>
                 </div>
@@ -232,10 +258,11 @@ export const ClustersPage = () => {
                 </tbody>
               </table>
 
-              <div className="paper-label" style={{ marginTop: 16 }}>簇内候选边</div>
+              <div className="paper-label" style={{ marginTop: 16 }}>簇内候选边（含待定关系）</div>
               <table className="table" style={{ marginTop: 6 }}>
                 <thead>
                   <tr>
+                    <th>关系</th>
                     <th>分数</th>
                     <th>判定</th>
                     <th>复核状态</th>
@@ -244,12 +271,15 @@ export const ClustersPage = () => {
                 <tbody>
                   {(detail.edges ?? []).map((edge) => (
                     <tr key={edge.id}>
+                      <td className="mono" style={{ fontSize: 11 }}>
+                        {(edge.left_key ?? edge.left_record_id) + ' ↔ ' + (edge.right_key ?? edge.right_record_id)}
+                      </td>
                       <td className="num">{formatScore(edge.score)}</td>
                       <td>
                         <StatusStamp kind="decision" value={edge.decision} />
                       </td>
-                      <td className="dim">
-                        {edge.status === 'pending' ? '未处理' : edge.status === 'confirmed' ? '已确认' : '已拒绝'}
+                      <td>
+                        <StatusStamp kind="candidate" value={edge.status} />
                       </td>
                     </tr>
                   ))}

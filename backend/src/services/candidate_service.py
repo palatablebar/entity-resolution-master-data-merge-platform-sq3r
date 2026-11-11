@@ -1,4 +1,8 @@
-"""候选对服务：列表、详情、人工复核（确认/拒绝）。"""
+"""候选对服务：列表、详情、人工复核（确认/拒绝）。
+
+复核落章后调用 regroup_service 按最终确认的候选关系重新成组：
+未决记录保持待定，被拒绝关系不会留在同一身份，黄金档案只由已确认成员重建。
+"""
 from __future__ import annotations
 
 import uuid
@@ -9,15 +13,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.constants import error_codes as codes
-from src.constants.enums import CandidateDecision, CandidateStatus, ClusterStatus, GoldenStatus, RunStatus
-from src.models.entity_cluster import EntityCluster
-from src.models.golden_record import GoldenRecord
+from src.constants.enums import CandidateDecision, CandidateStatus
 from src.models.match_candidate import MatchCandidate
+from src.models.resolution_run import ResolutionRun
 from src.models.source_record import SourceRecord
 from src.models.user import User
 from src.schemas.candidates import serialize_candidate
-from src.schemas.records import serialize_record
-from src.services import audit_service
+from src.services import audit_service, regroup_service
 from src.utils.errors import AppError, not_found
 from src.utils.pagination import normalize_page
 
@@ -89,6 +91,36 @@ def get_candidate(db: Session, candidate_id: str) -> dict[str, Any]:
     return payload
 
 
+def _regroup_brief(regroup: dict[str, Any]) -> dict[str, Any]:
+    """审计载荷用的紧凑成组摘要（完整快照随接口返回）。"""
+
+    def brief(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "cluster_id": item["cluster_id"],
+                "status": item["status"],
+                "member_keys": item["member_keys"],
+                "golden_status": item["golden_status"],
+            }
+            for item in groups
+        ]
+
+    return {
+        "before": brief(regroup.get("before", [])),
+        "after": brief(regroup.get("after", [])),
+        "split": brief(regroup.get("split", [])),
+        "pending_edge_ids": [edge["id"] for edge in regroup.get("pending_edges", [])],
+    }
+
+
+def _primary_cluster_id(regroup: dict[str, Any]) -> str | None:
+    after = regroup.get("after", [])
+    for item in after:
+        if item["status"] == "confirmed":
+            return item["cluster_id"]
+    return after[0]["cluster_id"] if after else None
+
+
 def review_candidate(
     db: Session,
     candidate_id: str,
@@ -102,12 +134,6 @@ def review_candidate(
     row = db.get(MatchCandidate, candidate_id)
     if row is None:
         raise not_found("MatchCandidate", candidate_id)
-    if row.status != CandidateStatus.PENDING.value:
-        raise AppError(
-            codes.CANDIDATE_LOCKED,
-            "该候选已被复核，不能重复处理",
-            f"status={row.status}",
-        )
     if row.decision != CandidateDecision.REVIEW.value:
         raise AppError(
             codes.CANDIDATE_LOCKED,
@@ -115,36 +141,66 @@ def review_candidate(
             f"decision={row.decision}",
         )
 
-    row.status = CandidateStatus.CONFIRMED.value if action == "confirm" else CandidateStatus.REJECTED.value
+    expected = (
+        CandidateStatus.CONFIRMED.value if action == "confirm" else CandidateStatus.REJECTED.value
+    )
+    if row.status != CandidateStatus.PENDING.value:
+        if row.status != expected:
+            raise AppError(
+                codes.CANDIDATE_LOCKED,
+                "该候选已被复核，不能重复处理",
+                f"status={row.status}",
+            )
+        # 同一判断重复执行：幂等返回当前成组状态，不新增簇或档案
+        regroup = regroup_service.current_regroup_state(
+            db, row.run_id, str(row.left_record_id), str(row.right_record_id)
+        )
+        audit_service.record(
+            db,
+            action=f"candidate.{action}",
+            entity_type="MatchCandidate",
+            entity_id=str(row.id),
+            actor_id=str(user.id),
+            actor_email=user.email,
+            payload={
+                "score": row.score,
+                "decision": row.decision,
+                "note": note,
+                "idempotent_replay": True,
+                "regroup": _regroup_brief(regroup),
+            },
+            ip=ip,
+            trace_id=trace_id,
+        )
+        result = get_candidate(db, candidate_id)
+        result["cluster_id"] = _primary_cluster_id(regroup)
+        result["regroup"] = regroup
+        return result
+
+    # 矛盾守卫：拒绝的关系不能留在同一身份，确认也不能把已拒绝的 pair 圈进同一身份
+    conflict = regroup_service.judgment_conflict(
+        db, row.run_id, str(row.left_record_id), str(row.right_record_id), action
+    )
+    if conflict is not None:
+        raise AppError(codes.CLUSTER_CONFLICT, conflict, f"candidate={row.id} action={action}")
+
+    row.status = expected
     row.reviewed_by = user.id
     row.reviewed_at = datetime.now(timezone.utc)
     row.review_note = note or ""
+
+    run = db.get(ResolutionRun, row.run_id)
+    regroup = regroup_service.apply_regroup(
+        db,
+        run=run,
+        seed_left=str(row.left_record_id),
+        seed_right=str(row.right_record_id),
+        actor_email=user.email,
+        note=note or "",
+    )
     db.commit()
 
-    cluster_id: str | None = None
-    if action == "confirm":
-        cluster = (
-            db.query(EntityCluster)
-            .filter(
-                EntityCluster.run_id == row.run_id,
-                EntityCluster.member_ids.contains([str(row.left_record_id), str(row.right_record_id)]),
-            )
-            .first()
-        )
-        if cluster is not None:
-            cluster_id = str(cluster.id)
-            cluster.status = ClusterStatus.CONFIRMED.value
-            cluster.review_notes = {
-                **(cluster.review_notes or {}),
-                "confirmed_by": str(user.id),
-                "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                "note": note or "",
-            }
-            golden = db.query(GoldenRecord).filter(GoldenRecord.cluster_id == cluster.id).first()
-            if golden is not None:
-                golden.status = GoldenStatus.ACTIVE.value
-            db.commit()
-
+    cluster_id = _primary_cluster_id(regroup)
     audit_service.record(
         db,
         action=f"candidate.{action}",
@@ -157,10 +213,12 @@ def review_candidate(
             "decision": row.decision,
             "note": note,
             "cluster_id": cluster_id,
+            "regroup": _regroup_brief(regroup),
         },
         ip=ip,
         trace_id=trace_id,
     )
     result = get_candidate(db, candidate_id)
     result["cluster_id"] = cluster_id
+    result["regroup"] = regroup
     return result

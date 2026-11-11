@@ -33,4 +33,5 @@ CLUSTER_STATUS_LABELS = {
     ClusterStatus.AUTO_MERGED.value: "自动合并",
     ClusterStatus.PENDING_REVIEW.value: "待复核",
     ClusterStatus.CONFIRMED.value: "已确认",
+    ClusterStatus.SPLIT.value: "已拆分",
 }

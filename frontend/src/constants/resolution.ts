@@ -1,6 +1,7 @@
 import type {
   CandidateDecision,
   CandidateStatus,
+  ClusterEdgeType,
   ClusterStatus,
   GoldenStatus,
   RunStatus,
@@ -23,11 +24,19 @@ export const CLUSTER_STATUS_LABELS: Record<ClusterStatus, string> = {
   auto_merged: '自动成簇',
   pending_review: '待复核',
   confirmed: '已确认',
+  split: '已拆分',
 };
 
 export const GOLDEN_STATUS_LABELS: Record<GoldenStatus, string> = {
   active: '生效',
   provisional: '暂定',
+  retired: '已退役',
+};
+
+export const EDGE_TYPE_LABELS: Record<ClusterEdgeType, string> = {
+  auto: '自动边',
+  review: '复核边',
+  curated: '人工成组',
 };
 
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {

@@ -12,8 +12,9 @@ export interface User {
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 export type CandidateDecision = 'auto' | 'review' | 'reject';
 export type CandidateStatus = 'pending' | 'confirmed' | 'rejected';
-export type ClusterStatus = 'auto_merged' | 'pending_review' | 'confirmed';
-export type GoldenStatus = 'active' | 'provisional';
+export type ClusterStatus = 'auto_merged' | 'pending_review' | 'confirmed' | 'split';
+export type GoldenStatus = 'active' | 'provisional' | 'retired';
+export type ClusterEdgeType = 'auto' | 'review' | 'curated';
 
 export interface Run {
   id: string;
@@ -69,6 +70,39 @@ export interface FeatureDetail {
   contribution: number;
 }
 
+export interface RegroupGroupSnapshot {
+  cluster_id: string;
+  cluster_key: string;
+  edge_type: ClusterEdgeType;
+  status: ClusterStatus;
+  member_ids: string[];
+  member_keys: string[];
+  record_count: number;
+  confidence: number;
+  golden_id: string | null;
+  golden_status: GoldenStatus | null;
+}
+
+export interface RegroupPendingEdge {
+  id: string;
+  left_record_id: string;
+  right_record_id: string;
+  left_key: string;
+  right_key: string;
+  score: number;
+  status: CandidateStatus;
+}
+
+/** 落章后按最终确认关系重新成组的结果：处理前/后分组、拆分留痕、待定关系、档案状态。 */
+export interface RegroupResult {
+  scope_record_ids: string[];
+  before: RegroupGroupSnapshot[];
+  after: RegroupGroupSnapshot[];
+  split: RegroupGroupSnapshot[];
+  pending_edges: RegroupPendingEdge[];
+  idempotent?: boolean;
+}
+
 export interface Candidate {
   id: string;
   run_id: string;
@@ -86,6 +120,7 @@ export interface Candidate {
   left?: SourceRecord;
   right?: SourceRecord;
   cluster_id?: string | null;
+  regroup?: RegroupResult | null;
 }
 
 export interface Cluster {
@@ -97,12 +132,16 @@ export interface Cluster {
   record_count: number;
   confidence: number;
   status: ClusterStatus;
-  edge_type: 'auto' | 'review';
+  edge_type: ClusterEdgeType;
+  golden_status?: GoldenStatus | null;
+  golden?: { id: string; entity_key: string; status: GoldenStatus } | null;
   members?: SourceRecord[];
   edges?: Array<{
     id: string;
     left_record_id: string;
     right_record_id: string;
+    left_key?: string;
+    right_key?: string;
     score: number;
     decision: CandidateDecision;
     status: CandidateStatus;
